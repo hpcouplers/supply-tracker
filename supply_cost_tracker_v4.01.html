@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Supply Tracker — Test</title>
+<style>
+  body { font-family: monospace; padding: 20px; max-width: 900px; margin: 0 auto; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+  th { background: #f0f0f0; }
+  button { padding: 6px 14px; cursor: pointer; margin: 4px; }
+  #status { margin: 10px 0; color: green; font-weight: bold; }
+  .err { color: red; }
+  input, select { padding: 6px; margin: 4px; font-family: monospace; min-width: 160px; }
+  .form-row { margin: 8px 0; }
+  label { display: inline-block; width: 80px; }
+</style>
+</head>
+<body>
+
+<h2>Supply Tracker — v4.01</h2>
+<div id="status">Loading...</div>
+
+<h3>Add Order</h3>
+<div class="form-row"><label>Date</label><input type="date" id="f-date"></div>
+<div class="form-row"><label>Supplier</label><select id="f-supplier"></select></div>
+<div class="form-row"><label>Order #</label><input type="text" id="f-order" placeholder="e.g. 30422"></div>
+<div class="form-row"><label>Item</label>
+  <select id="f-item" onchange="updatePackSizes()">
+    <option value="">-- select item --</option>
+    <option>Tape</option>
+    <option>PB000</option>
+    <option>PB00</option>
+    <option>PB0</option>
+    <option>PB2</option>
+    <option>PB3</option>
+    <option>PB4</option>
+    <option>PB5</option>
+  </select>
+</div>
+<div class="form-row"><label>Pack</label><select id="f-pack" onchange="calcUnit()"><option>-- select item first --</option></select></div>
+<div class="form-row"><label>Total $</label><input type="number" id="f-total" step="0.01" placeholder="0.00" oninput="calcUnit()"></div>
+<div class="form-row"><label>Unit $</label><input type="number" id="f-unit" step="0.001" placeholder="auto-calculated" readonly style="background:#f5f5f5;"></div>
+<button onclick="addOrder()">Add Order</button>
+
+<h3>Orders <span id="count"></span></h3>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th><th>Date</th><th>Supplier</th><th>Order #</th>
+      <th>Item</th><th>Pack</th><th>Total</th><th>Unit</th><th></th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+const SUPABASE_URL = 'https://vsntiuhoxokxyynskood.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzbnRpdWhveG9reHl5bnNrb29kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxOTEwNDcsImV4cCI6MjA5MDc2NzA0N30.ooUQM-dydJtRpynEif5D9ZYRDmp1G6b42rkZV_vG7x8';
+const HEADERS = {
+  'apikey': SUPABASE_KEY,
+  'Authorization': `Bearer ${SUPABASE_KEY}`,
+  'Content-Type': 'application/json',
+  'Prefer': 'return=representation'
+};
+
+let packSizesData = [];
+
+function setStatus(msg, err) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = err ? 'err' : '';
+}
+
+async function loadDropdowns() {
+  // Load suppliers
+  const supRes = await fetch(`${SUPABASE_URL}/rest/v1/suppliers?select=*&order=sort_order.asc`, { headers: HEADERS });
+  const suppliers = await supRes.json();
+  const supSelect = document.getElementById('f-supplier');
+  supSelect.innerHTML = suppliers.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+
+  // Load pack sizes
+  const packRes = await fetch(`${SUPABASE_URL}/rest/v1/pack_sizes?select=*&order=sort_order.asc`, { headers: HEADERS });
+  packSizesData = await packRes.json();
+}
+
+function updatePackSizes() {
+  const item = document.getElementById('f-item').value;
+  const packSelect = document.getElementById('f-pack');
+  const sizes = packSizesData.filter(p => p.item === item);
+  if (sizes.length > 0) {
+    packSelect.innerHTML = sizes.map(p => `<option value="${p.pack}">${p.pack}</option>`).join('');
+  } else {
+    packSelect.innerHTML = '<option>-- select item first --</option>';
+  }
+  calcUnit();
+}
+
+function calcUnit() {
+  const pack = document.getElementById('f-pack').value;
+  const total = parseFloat(document.getElementById('f-total').value);
+  const match = pack.match(/(\d+(\.\d+)?)/);
+  if (match && !isNaN(total) && total > 0) {
+    document.getElementById('f-unit').value = (total / parseFloat(match[1])).toFixed(3);
+  }
+}
+
+async function loadOrders() {
+  setStatus('Loading...');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/supply_orders?select=*&order=date.asc`, { headers: HEADERS });
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      setStatus('Error: ' + JSON.stringify(data), true);
+      return;
+    }
+    document.getElementById('count').textContent = `(${data.length} rows)`;
+    const tbody = document.getElementById('tbody');
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${r.date}</td>
+        <td>${r.supplier}</td>
+        <td>${r.order_num}</td>
+        <td>${r.item}</td>
+        <td>${r.pack}</td>
+        <td>$${parseFloat(r.total).toFixed(2)}</td>
+        <td>$${parseFloat(r.unit).toFixed(3)}</td>
+        <td><button onclick="deleteOrder(${r.id})">Delete</button></td>
+      </tr>
+    `).join('');
+    setStatus(`Connected — ${data.length} orders loaded`);
+  } catch(e) {
+    setStatus('Failed to load: ' + e.message, true);
+  }
+}
+
+async function addOrder() {
+  const order = {
+    date:      document.getElementById('f-date').value,
+    supplier:  document.getElementById('f-supplier').value,
+    order_num: document.getElementById('f-order').value.trim(),
+    item:      document.getElementById('f-item').value,
+    pack:      document.getElementById('f-pack').value,
+    total:     parseFloat(document.getElementById('f-total').value),
+    unit:      parseFloat(document.getElementById('f-unit').value),
+  };
+
+  if (!order.date || !order.order_num || !order.item || order.item === '' || isNaN(order.total) || isNaN(order.unit)) {
+    setStatus('Please fill in all fields', true);
+    return;
+  }
+
+  setStatus('Saving...');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/supply_orders`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify(order)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setStatus('Saved!');
+      // Clear form
+      document.getElementById('f-order').value = '';
+      document.getElementById('f-total').value = '';
+      document.getElementById('f-unit').value = '';
+      await loadOrders();
+    } else {
+      setStatus('Save error: ' + JSON.stringify(data), true);
+    }
+  } catch(e) {
+    setStatus('Save failed: ' + e.message, true);
+  }
+}
+
+async function deleteOrder(id) {
+  if (!confirm('Delete row ' + id + '?')) return;
+  setStatus('Deleting...');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/supply_orders?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: HEADERS
+    });
+    if (res.ok) {
+      setStatus('Deleted!');
+      await loadOrders();
+    } else {
+      const data = await res.text();
+      setStatus('Delete error: ' + data, true);
+    }
+  } catch(e) {
+    setStatus('Delete failed: ' + e.message, true);
+  }
+}
+
+// Init
+document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+Promise.all([loadDropdowns(), loadOrders()]);
+</script>
+</body>
+</html>
